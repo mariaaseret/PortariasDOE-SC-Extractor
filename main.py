@@ -14,6 +14,7 @@
 # 4️⃣ Gera uma planilha Excel com os resultados.
 # ==========================================
 
+
 !pip install requests pandas pdfplumber tqdm
 
 import requests
@@ -22,7 +23,6 @@ import pdfplumber
 from tqdm import tqdm
 import re
 
-# Período a buscar
 anos = range(2025, 2026)
 meses = range(1, 13)
 
@@ -30,9 +30,7 @@ BASE_URL = "https://portal.doe.sea.sc.gov.br"
 API_MATERIA = BASE_URL + "/apis/materia/materia"
 API_PDF_JSON = BASE_URL + "/apis/edicao-preview/extrato/edicao/{}/materia/{}"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
-}
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 dados = []
 
@@ -42,20 +40,16 @@ print("🔎 Buscando matérias…")
 for ano in anos:
     for mes in meses:
         params = {
-            "ano": ano,
-            "mes": mes,
-            "assunto": "35",
-            "categoria": "4704302",
+            "ano": ano, "mes": mes,
+            "assunto": "35", "categoria": "4704302",
             "dsMateria": "calculados sobre a média das contribuições",
-            "tipoBusca": "1",
-            "ondePesquisar": "4"
+            "tipoBusca": "1", "ondePesquisar": "4"
         }
         resp = requests.get(API_MATERIA, params=params, headers=HEADERS)
         if resp.ok:
             lista = resp.json()
             if isinstance(lista, list):
-                for item in lista:
-                    dados.append(item)
+                dados.extend(lista)
 
 print(f"✅ {len(dados)} matérias encontradas")
 
@@ -65,14 +59,13 @@ def obter_pdf_url(cdJornal, cdMateria):
     resp = requests.get(url_json, headers=HEADERS)
     if not resp.ok:
         return None
-    json_resp = resp.json()
-    return json_resp.get("urlExtratoArquivo")
+    return resp.json().get("urlExtratoArquivo")
 
-# === Etapa 3: Processa o PDF e extrai os campos ===
+# === Etapa 3: Processa o PDF e devolve lista de registros válidos ===
 def extrair_detalhes_pdf(url_pdf):
     resp = requests.get(url_pdf, headers=HEADERS)
     if not resp.ok:
-        return None
+        return []
 
     with open("/tmp/materia.pdf", "wb") as f:
         f.write(resp.content)
@@ -80,65 +73,76 @@ def extrair_detalhes_pdf(url_pdf):
     with pdfplumber.open("/tmp/materia.pdf") as pdf:
         texto = ""
         for page in pdf.pages:
-            texto += page.extract_text() + "\n"
+            texto += page.extract_text().replace("\n", " ")
 
-    # Limpa quebras de linha e espaços excessivos
-    texto_limpo = re.sub(r'\s+', ' ', texto)
+    texto = re.sub(r'\s+', ' ', texto).strip()
 
-    # Nome do servidor: trecho entre o último ' a ' e ', matrícula'
-    try:
-        idx_matricula = texto_limpo.lower().find(", matrícula")
-        texto_ate_matricula = texto_limpo[:idx_matricula]
-        idx_a = texto_ate_matricula.rfind(" a ")
-        nome = texto_ate_matricula[idx_a+3:].strip() if idx_a != -1 else ""
-    except:
-        nome = ""
+    blocos = re.split(r'(PORTARIA\s+Nº\s+\d+\s*-\s*\d{2}/\d{2}/\d{4}\.)', texto)
 
-    # Matrícula
-    try:
-        match_matricula = re.search(r'matrícula\s+([0-9\-]+)', texto_limpo, flags=re.IGNORECASE)
-        matricula = match_matricula.group(1).strip() if match_matricula else ""
-    except:
-        matricula = ""
+    registros = []
 
-    # Cargo
-    try:
-        cargo = texto_limpo.split("no cargo de")[-1].split(",")[0].strip()
-    except:
-        cargo = ""
+    for i in range(1, len(blocos), 2):
+        cabecalho = blocos[i]
+        corpo = blocos[i+1]
+        bloco_texto = (cabecalho + " " + corpo).strip()
 
-    # Órgão
-    try:
-        orgao = texto_limpo.split("lotado(a) na")[-1].split(",")[0].strip()
-    except:
-        orgao = ""
+        if "calculados sobre a média das contribuições" not in bloco_texto.lower():
+            continue
 
-    return nome, matricula, cargo, orgao
+        # Nome
+        try:
+            idx_matricula = bloco_texto.lower().find(", matrícula")
+            texto_ate_matricula = bloco_texto[:idx_matricula]
+            idx_a = max(texto_ate_matricula.rfind(" à "), texto_ate_matricula.rfind(" a "))
+            nome = texto_ate_matricula[idx_a+3:].strip() if idx_a != -1 else ""
+        except:
+            nome = ""
 
-# === Etapa 4: Processa todas as matérias e coleta resultados ===
+        # Matrícula
+        try:
+            match_matricula = re.search(
+                r'matrícula\s*(nº)?\s*([0-9]{6,}-[0-9](-[0-9]{2})?)',
+                bloco_texto, flags=re.IGNORECASE
+            )
+            matricula = match_matricula.group(2).strip() if match_matricula else ""
+        except:
+            matricula = ""
+
+        # Cargo
+        try:
+            cargo = bloco_texto.split("no cargo de")[-1].split(",")[0].strip()
+        except:
+            cargo = ""
+
+        # Órgão
+        try:
+            orgao = bloco_texto.strip().split()[-1].replace(".", "")
+        except:
+            orgao = ""
+        registros.append((nome, matricula, cargo, orgao))
+
+    return registros
+
+# === Etapa 4: Processa todas as matérias e coleta todos os registros válidos ===
 resultados = []
 for item in tqdm(dados, desc="📄 Processando matérias"):
     url_pdf = obter_pdf_url(item["cdJornal"], item["cd_materia"])
-    if url_pdf:
-        res = extrair_detalhes_pdf(url_pdf)
-    else:
-        res = None
+    if not url_pdf:
+        continue
 
-    if res:
-        nome, matricula, cargo, orgao = res
-    else:
-        nome = matricula = cargo = orgao = ""
+    registros_pdf = extrair_detalhes_pdf(url_pdf)
 
-    resultados.append({
-        "Nome do Servidor": nome,
-        "Matrícula": matricula,
-        "Cargo": cargo,
-        "Órgão de Origem": orgao,
-        "Data de Publicação do DOE": item["dtPublicacaoJornal"][:10],
-        "Número da Edição do DOE": item["vlNumero"],
-        "Número da Portaria": item["ds_titulo"].split("-")[0].strip(),
-        "Data da Portaria": item["ds_titulo"].split("-")[1].split(".")[0].strip() if "-" in item["ds_titulo"] else ""
-    })
+    for nome, matricula, cargo, orgao in registros_pdf:
+        resultados.append({
+            "Nome do Servidor": nome,
+            "Matrícula": matricula,
+            "Cargo": cargo,
+            "Órgão de Origem": orgao,
+            "Data de Publicação do DOE": item["dtPublicacaoJornal"][:10],
+            "Número da Edição do DOE": item["vlNumero"],
+            "Número da Portaria": item["ds_titulo"].split("-")[0].replace("PORTARIA", "").replace("Nº", "").strip(),
+            "Data da Portaria": item["ds_titulo"].split("-")[1].split(".")[0].strip() if "-" in item["ds_titulo"] else ""
+        })
 
 # Converte para DataFrame
 df_final = pd.DataFrame(resultados)

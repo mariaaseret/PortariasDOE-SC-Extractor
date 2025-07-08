@@ -13,7 +13,6 @@
 # 3️⃣ Baixa o PDF, extrai os dados (nome do servidor, matrícula, cargo, órgão).
 # 4️⃣ Gera uma planilha Excel com os resultados.
 # ==========================================
-
 !pip install requests pandas pdfplumber tqdm
 
 import requests
@@ -75,7 +74,9 @@ def extrair_detalhes_pdf(url_pdf):
             texto += page.extract_text().replace("\n", " ")
 
     texto = re.sub(r'\s+', ' ', texto).strip()
+    texto = re.sub(r'-\s+(\d+)', r'-\1', texto)  # Corrige matrículas quebradas
 
+    # Quebra o texto em blocos por portaria
     blocos = re.split(r'(PORTARIA\s+Nº\s+\d+\s*-\s*\d{2}/\d{2}/\d{4}\.)', texto)
 
     registros = []
@@ -87,6 +88,15 @@ def extrair_detalhes_pdf(url_pdf):
 
         if "calculados sobre a média das contribuições" not in bloco_texto.lower():
             continue
+
+        # Número da portaria e data
+        try:
+            portaria_match = re.search(r'PORTARIA\s+Nº\s+(\d+)\s*-\s*(\d{2}/\d{2}/\d{4})', cabecalho, flags=re.IGNORECASE)
+            numero_portaria = portaria_match.group(1)
+            data_portaria = portaria_match.group(2)
+        except:
+            numero_portaria = ""
+            data_portaria = ""
 
         # Nome
         try:
@@ -101,13 +111,12 @@ def extrair_detalhes_pdf(url_pdf):
         except:
             nome = ""
 
-        # Matrícula
+        # Matrícula (valida formato com 12 caracteres)
         try:
             match_matricula = re.search(
-                r'matrícula\s*(nº)?\s*([0-9]{6,}-[0-9](-[0-9]{2})?)',
-                bloco_texto, flags=re.IGNORECASE
+                r'(\d{7}-\d-\d{2})', bloco_texto
             )
-            matricula = match_matricula.group(2).strip() if match_matricula else ""
+            matricula = match_matricula.group(1).strip() if match_matricula else ""
         except:
             matricula = ""
 
@@ -117,12 +126,14 @@ def extrair_detalhes_pdf(url_pdf):
         except:
             cargo = ""
 
-        # Órgão
+        # Órgão — última palavra entre '-' e '.'
         try:
-            orgao = bloco_texto.strip().split()[-1].replace(".", "")
+            orgao_match = re.search(r'-\s*([A-Z]+)\.', bloco_texto)
+            orgao = orgao_match.group(1).strip() if orgao_match else ""
         except:
             orgao = ""
-        registros.append((nome, matricula, cargo, orgao))
+
+        registros.append((nome, matricula, cargo, orgao, numero_portaria, data_portaria))
 
     return registros
 
@@ -135,7 +146,7 @@ for item in tqdm(dados, desc="📄 Processando matérias"):
 
     registros_pdf = extrair_detalhes_pdf(url_pdf)
 
-    for nome, matricula, cargo, orgao in registros_pdf:
+    for nome, matricula, cargo, orgao, numero_portaria, data_portaria in registros_pdf:
         resultados.append({
             "Nome do Servidor": nome,
             "Matrícula": matricula,
@@ -143,8 +154,8 @@ for item in tqdm(dados, desc="📄 Processando matérias"):
             "Órgão de Origem": orgao,
             "Data de Publicação do DOE": item["dtPublicacaoJornal"][:10],
             "Número da Edição do DOE": item["vlNumero"],
-            "Número da Portaria": item["ds_titulo"].split("-")[0].replace("PORTARIA", "").replace("Nº", "").strip(),
-            "Data da Portaria": item["ds_titulo"].split("-")[1].split(".")[0].strip() if "-" in item["ds_titulo"] else ""
+            "Número da Portaria": numero_portaria,
+            "Data da Portaria": data_portaria
         })
 
 # Converte para DataFrame
@@ -155,4 +166,5 @@ df_final.to_excel("portarias_doe.xlsx", index=False)
 print("📁 Arquivo Excel gerado: portarias_doe.xlsx")
 
 from google.colab import files
+files.download("portarias_doe.xlsx")
 files.download("portarias_doe.xlsx")

@@ -93,7 +93,11 @@ def extrair_detalhes_pdf(url_pdf):
         try:
             idx_matricula = bloco_texto.lower().find(", matrícula")
             texto_ate_matricula = bloco_texto[:idx_matricula]
-            idx_a = max(texto_ate_matricula.rfind(" à "), texto_ate_matricula.rfind(" a "))
+            idx_a = max(
+                texto_ate_matricula.rfind(" à "),
+                texto_ate_matricula.rfind(" a "),
+                texto_ate_matricula.rfind(" de ")
+            )
             nome = texto_ate_matricula[idx_a+3:].strip() if idx_a != -1 else ""
         except:
             nome = ""

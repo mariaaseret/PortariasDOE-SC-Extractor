@@ -14,7 +14,6 @@
 # 4️⃣ Gera uma planilha Excel com os resultados.
 # ==========================================
 
-
 !pip install requests pandas pdfplumber tqdm
 
 import requests

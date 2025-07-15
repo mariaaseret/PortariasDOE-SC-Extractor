@@ -91,4 +91,4 @@ A planilha é automaticamente baixada no final da execução.
 
 ## ✍️ Créditos
 
-Desenvolvido por MARIA TERESA SILVA SANTOS com apoio do Auditor  ADEMAR SENABIO FILHO e ChatGPT.
+Desenvolvido por MARIA TERESA SILVA SANTOS com apoio do Auditor  ADEMAR SENABIO FILHO.

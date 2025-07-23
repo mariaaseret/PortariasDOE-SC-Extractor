@@ -13,6 +13,7 @@
 # 3️⃣ Baixa o PDF, extrai os dados (nome do servidor, matrícula, cargo, órgão).
 # 4️⃣ Gera uma planilha Excel com os resultados.
 # ==========================================
+
 !pip install requests pandas pdfplumber tqdm
 
 import requests
@@ -111,11 +112,9 @@ def extrair_detalhes_pdf(url_pdf):
         except:
             nome = ""
 
-        # Matrícula (valida formato com 12 caracteres)
+        # Matrícula
         try:
-            match_matricula = re.search(
-                r'(\d{7}-\d-\d{2})', bloco_texto
-            )
+            match_matricula = re.search(r'(\d{7}-\d-\d{2})', bloco_texto)
             matricula = match_matricula.group(1).strip() if match_matricula else ""
         except:
             matricula = ""
@@ -126,14 +125,69 @@ def extrair_detalhes_pdf(url_pdf):
         except:
             cargo = ""
 
-        # Órgão — última palavra entre '-' e '.'
+        # Órgão
         try:
-            orgao_match = re.search(r'-\s*([A-Z]+)\.', bloco_texto)
+            orgao_match = re.search(r'[–-]\s*([A-Z]+)\.', bloco_texto)
             orgao = orgao_match.group(1).strip() if orgao_match else ""
         except:
             orgao = ""
 
-        registros.append((nome, matricula, cargo, orgao, numero_portaria, data_portaria))
+        # Modalidade: exatamente as palavras em MAIÚSCULAS após CONCEDER
+        try:
+            modal_match = re.search(r'CONCEDER\s+(([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s]+))', bloco_texto)
+            modalidade = modal_match.group(1).strip() if modal_match else ""
+        except:
+            modalidade = ""
+
+        # Tipo/Percentual: tudo o que vem depois da modalidade até "nos termos"
+        try:
+            tipo_match = re.search(
+                re.escape(modalidade) + r'(.*?)(?=nos termos)',
+                bloco_texto,
+                flags=re.IGNORECASE
+            )
+            tipo = tipo_match.group(1).strip(" ,") if tipo_match else ""
+        except:
+            tipo = ""
+
+        # Percentual
+        try:
+            # Procura valores como "31,05%" ou "87%"
+            percentual_match = re.search(r'(\d{1,3}(?:[\.,]\d{1,2})?)\s*%', tipo)
+            if percentual_match:
+                percentual = percentual_match.group(1).replace(",", ".")
+            else:
+                percentual = "100"
+        except:
+            percentual = "100"
+
+
+        # Fundamentação legal
+        try:
+            texto_normalizado = re.sub(r'[^\x00-\x7F]+', '', bloco_texto)
+
+            funda_match = re.search(r'nos termos(.*?),\s*de acordo', texto_normalizado, flags=re.IGNORECASE)
+            if funda_match:
+                fundamentacao = "nos termos" + funda_match.group(1).strip()
+            else:
+                funda_match = re.search(r'nos termos(.*?)de acordo', texto_normalizado, flags=re.IGNORECASE)
+                if funda_match:
+                    fundamentacao = "nos termos" + funda_match.group(1).strip()
+                else:
+                    funda_match = re.search(r'nos termos do(.*?)de acordo', texto_normalizado, flags=re.IGNORECASE)
+                    if funda_match:
+                        fundamentacao = "nos termos do" + funda_match.group(1).strip()
+                    else:
+                        funda_match = re.search(r'nos termos(.*?)(?:de\s+)?acordo', texto_normalizado, flags=re.IGNORECASE)
+                        fundamentacao = "nos termos" + funda_match.group(1).strip() if funda_match else ""
+        except:
+            fundamentacao = ""
+
+        registros.append((
+            nome, matricula, cargo, orgao,
+            numero_portaria, data_portaria,
+            modalidade, tipo, percentual, fundamentacao
+        ))
 
     return registros
 
@@ -146,7 +200,11 @@ for item in tqdm(dados, desc="📄 Processando matérias"):
 
     registros_pdf = extrair_detalhes_pdf(url_pdf)
 
-    for nome, matricula, cargo, orgao, numero_portaria, data_portaria in registros_pdf:
+    for (
+        nome, matricula, cargo, orgao,
+        numero_portaria, data_portaria,
+        modalidade, tipo, percentual, fundamentacao
+    ) in registros_pdf:
         resultados.append({
             "Nome do Servidor": nome,
             "Matrícula": matricula,
@@ -155,7 +213,11 @@ for item in tqdm(dados, desc="📄 Processando matérias"):
             "Data de Publicação do DOE": item["dtPublicacaoJornal"][:10],
             "Número da Edição do DOE": item["vlNumero"],
             "Número da Portaria": numero_portaria,
-            "Data da Portaria": data_portaria
+            "Data da Portaria": data_portaria,
+            "Modalidade de Aposentadoria": modalidade,
+            "Tipo de Aposentadoria/Percentual": tipo,
+            "Percentual": percentual,
+            "Fundamentação Legal": fundamentacao
         })
 
 # Converte para DataFrame
@@ -166,5 +228,4 @@ df_final.to_excel("portarias_doe.xlsx", index=False)
 print("📁 Arquivo Excel gerado: portarias_doe.xlsx")
 
 from google.colab import files
-files.download("portarias_doe.xlsx")
 files.download("portarias_doe.xlsx")
